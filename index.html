@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Krun Processor PWA</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; line-height: 1.6; max-width: 800px; margin: 0 auto; background: #f0f2f5; }
+        .container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        h2 { color: #1a1a1a; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+        .file-group { margin-bottom: 25px; padding: 15px; border: 1px solid #e0e0e0; border-radius: 8px; }
+        label { display: block; font-weight: bold; margin-bottom: 8px; color: #444; }
+        .status-badge { font-size: 0.85em; padding: 2px 8px; border-radius: 10px; margin-left: 10px; }
+        .saved { background: #d4edda; color: #155724; }
+        .missing { background: #f8d7da; color: #721c24; }
+        button { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; transition: 0.3s; }
+        button:hover { background: #0056b3; }
+        #processBtn { width: 100%; margin-top: 10px; font-weight: bold; }
+        #status { margin-top: 20px; text-align: center; font-weight: bold; }
+        .note { font-size: 0.9em; color: #666; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Krun Processor</h2>
+    
+    <div class="file-group">
+        <label for="inputA2">Step 1: Mapping File (a2CharCon.txt)
+            <span id="mapStatus" class="status-badge missing">Not Saved</span>
+        </label>
+        <input type="file" id="inputA2" accept=".txt">
+        <p class="note">Upload once and click "Save Mapping" to store it in your browser.</p>
+        <button id="saveMapBtn" style="background: #28a745; font-size: 14px; padding: 8px 15px;">Save Mapping to Browser</button>
+    </div>
+
+    <div class="file-group">
+        <label for="inputA1">Step 2: Source Text (a1Krun.txt):</label>
+        <input type="file" id="inputA1" accept=".txt">
+    </div>
+
+    <button id="processBtn">Process and Download Results</button>
+    <div id="status"></div>
+</div>
+
+<script>
+    let cachedMapping = null;
+
+    // --- IndexedDB Logic for Persistent Storage ---
+    const dbName = "KrunStorage";
+    const request = indexedDB.open(dbName, 1);
+
+    request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        db.createObjectStore("settings");
+    };
+
+    request.onsuccess = (event) => {
+        const db = event.target.result;
+        loadSavedMapping(db);
+    };
+
+    function loadSavedMapping(db) {
+        const transaction = db.transaction(["settings"], "readonly");
+        const store = transaction.objectStore("settings");
+        const getReq = store.get("a2Mapping");
+
+        getReq.onsuccess = () => {
+            if (getReq.result) {
+                cachedMapping = getReq.result;
+                updateMapStatus(true);
+            }
+        };
+    }
+
+    function updateMapStatus(isSaved) {
+        const badge = document.getElementById('mapStatus');
+        if (isSaved) {
+            badge.innerText = "Saved in Browser";
+            badge.className = "status-badge saved";
+        } else {
+            badge.innerText = "Not Saved";
+            badge.className = "status-badge missing";
+        }
+    }
+
+    // --- Event Listeners ---
+    document.getElementById('saveMapBtn').addEventListener('click', async () => {
+        const file = document.getElementById('inputA2').files[0];
+        if (!file) return alert("Select a file first!");
+
+        const text = await file.text();
+        const db = request.result;
+        const transaction = db.transaction(["settings"], "readwrite");
+        transaction.objectStore("settings").put(text, "a2Mapping");
+        
+        transaction.oncomplete = () => {
+            cachedMapping = text;
+            updateMapStatus(true);
+            alert("Mapping saved! You won't need to upload it again.");
+        };
+    });
+
+    document.getElementById('processBtn').addEventListener('click', async () => {
+        const fileA1 = document.getElementById('inputA1').files[0];
+        
+        if (!fileA1) return alert("Please upload a source file!");
+        if (!cachedMapping) return alert("No mapping data found. Please upload a2CharCon.txt and save it.");
+
+        const status = document.getElementById('status');
+        status.innerText = "Processing...";
+
+        try {
+            const textA1 = await fileA1.text();
+            const mappingData = parseMapping(cachedMapping);
+            
+            const inputLines = textA1.split(/\r?\n/).filter(l => l.trim().length > 0);
+            let finalCombinedText = "";
+
+            inputLines.forEach((line, index) => {
+                const charList = line.split('');
+                const unicodeList = charList.map(char => char.charCodeAt(0));
+                const terms = unicodeList.map(uni => mappingData[uni] || `Unknown_${uni}`);
+
+                const sentences = [];
+                for (let i = 0; i < terms.length; i += 5) {
+                    let chunk = terms.slice(i, i + 5);
+                    while (chunk.length < 5) chunk.push('end of program');
+                    sentences.push(`the ${chunk[0]} in the ${chunk[1]}, will ${chunk[2]} the ${chunk[3]} in the ${chunk[4]}. Holidays never last.`);
+                }
+
+                let convertedLine = sentences.join(' ');
+                if (index === 0) convertedLine = " Work is work. " + convertedLine;
+                finalCombinedText += line + "\n" + convertedLine + "\n";
+            });
+
+            downloadFile("b1ConvertedText.txt", finalCombinedText);
+            status.innerText = "Success!";
+        } catch (err) {
+            status.innerText = "Error processing data.";
+        }
+    });
+
+    function parseMapping(text) {
+        const lines = text.split(/\r?\n/);
+        const map = {};
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i].trim();
+            if (line.startsWith('#')) {
+                const id = parseInt(line.substring(1));
+                if (i + 1 < lines.length) {
+                    let nextLine = lines[i + 1].trim();
+                    if (nextLine.startsWith('@') && nextLine.endsWith('*')) {
+                        map[id] = nextLine.substring(1, nextLine.length - 1);
+                    }
+                }
+            }
+        }
+        return map;
+    }
+
+    function downloadFile(filename, content) {
+        const element = document.createElement('a');
+        element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(content));
+        element.setAttribute('download', filename);
+        element.click();
+    }
+</script>
+
+</body>
+</html>

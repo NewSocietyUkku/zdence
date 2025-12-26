@@ -1,0 +1,22 @@
+const CACHE_NAME = 'zdence';
+const urlsToCache = [
+  '/zdence/',
+  '/zdence/index.html',
+  '/zdence/manifest.json',
+  '/zdence/sw.js',
+  '/zdence/icon.png'
+];
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(urlsToCache))
+  );
+});
+
+self.addEventListener('fetch', event => {
+  event.respondWith(
+    caches.match(event.request)
+      .then(response => response || fetch(event.request))
+  );
+});
