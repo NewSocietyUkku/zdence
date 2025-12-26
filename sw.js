@@ -1,4 +1,4 @@
-const CACHE_NAME = 'zdence';
+const CACHE_NAME = 'zdence-2';
 const urlsToCache = [
   '/zdence/',
   '/zdence/index.html',
